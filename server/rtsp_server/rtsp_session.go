@@ -3,6 +3,10 @@ package rtsp_server
 import (
 	"bytes"
 	"encoding/binary"
+	"log"
+	"os"
+	"time"
+
 	"github.com/aler9/gortsplib/v2"
 	"github.com/aler9/gortsplib/v2/pkg/codecs/h264"
 	"github.com/aler9/gortsplib/v2/pkg/format"
@@ -12,12 +16,10 @@ import (
 	"github.com/deepch/vdk/codec/aacparser"
 	"github.com/deepch/vdk/codec/h264parser"
 	"github.com/deepch/vdk/codec/opusparser"
+	"github.com/deepch/vdk/format/aac"
 	"github.com/general252/live/format/mpegts"
 	"github.com/general252/live/server/server_interface"
 	"github.com/pion/rtp"
-	"log"
-	"os"
-	"time"
 )
 
 // 通过代理示例, rtmp转rtsp
@@ -28,6 +30,7 @@ type RtspSession struct {
 	ch       *server_interface.Channel
 	connPath string
 
+	ctx       *gortsplib.ServerHandlerOnAnnounceCtx
 	stream    *gortsplib.ServerStream
 	publisher *gortsplib.ServerSession
 
@@ -41,6 +44,7 @@ func NewRtspSession(parent server_interface.ServerInterface, ctx *gortsplib.Serv
 	tis := &RtspSession{
 		parent:         parent,
 		connPath:       connPath,
+		ctx:            ctx,
 		stream:         gortsplib.NewServerStream(ctx.Medias),
 		publisher:      ctx.Session,
 		multiDecoders:  map[format.Format]MultiDecoder{},
@@ -162,9 +166,11 @@ func (tis *RtspSession) onH264(m *media.Media, f format.Format, pkt *rtp.Packet)
 		return
 	}
 
-	if true {
+	if true && tis.ch != nil {
 		for _, nalu := range nalus {
 			buf := &bytes.Buffer{}
+
+			// 添加nalu头
 			if err := binary.Write(buf, binary.BigEndian, int32(len(nalu))); err != nil {
 				log.Println(err)
 				continue
@@ -188,7 +194,7 @@ func (tis *RtspSession) onH264(m *media.Media, f format.Format, pkt *rtp.Packet)
 	}
 
 	// 写ts文件
-	if true {
+	if false {
 		if mpegTsMuxer == nil {
 			if f, err := os.Create("out.ts"); err == nil {
 				mpegTsMuxer = mpegts.NewMuxer(f, formatH264.SafeSPS(), formatH264.SafePPS())
@@ -198,7 +204,7 @@ func (tis *RtspSession) onH264(m *media.Media, f format.Format, pkt *rtp.Packet)
 	}
 
 	// 写h264文件
-	if true {
+	if false {
 		if fpH264 == nil {
 			fpH264, _ = os.Create("out.h264")
 		}
@@ -234,6 +240,11 @@ func (tis *RtspSession) onH264(m *media.Media, f format.Format, pkt *rtp.Packet)
 	}
 }
 
+var (
+	fpAAC    *os.File
+	aacMuxer *aac.Muxer
+)
+
 func (tis *RtspSession) onMPEG4Audio(m *media.Media, f format.Format, pkt *rtp.Packet) {
 	formatMPEG4Audio, ok := f.(*format.MPEG4Audio)
 	if !ok {
@@ -254,8 +265,64 @@ func (tis *RtspSession) onMPEG4Audio(m *media.Media, f format.Format, pkt *rtp.P
 		_ = pts
 	}
 
-	for _, nalu := range nalus {
-		_ = nalu
+	if true {
+		for _, nalu := range nalus {
+			err = tis.ch.Que.WritePacket(av.Packet{
+				IsKeyFrame:      false,
+				Idx:             1, // 索引
+				CompositionTime: 0,
+				Time:            pts,
+				Duration:        0,
+				Data:            nalu,
+			})
+			if err != nil {
+				log.Println(err)
+			}
+		}
+	}
+
+	if false {
+		if fpAAC == nil {
+			fpAAC, _ = os.Create("out.aac")
+			aacMuxer = aac.NewMuxer(fpAAC)
+
+			for _, m := range tis.ctx.Medias {
+				for _, f := range m.Formats {
+					switch f := f.(type) {
+					case *format.MPEG4Audio:
+						config := aacparser.MPEG4AudioConfig{
+							SampleRate:      f.Config.SampleRate,
+							ChannelLayout:   av.CH_FRONT_CENTER,
+							ObjectType:      uint(f.Config.Type),
+							SampleRateIndex: 0,
+							ChannelConfig:   0,
+						}
+						if f.Config.ChannelCount == 2 {
+							config.ChannelLayout = av.CH_STEREO
+						}
+
+						if codecData, err := aacparser.NewCodecDataFromMPEG4AudioConfig(config); err == nil {
+							_ = aacMuxer.WriteHeader([]av.CodecData{codecData})
+						} else {
+							log.Println(err)
+						}
+					}
+
+				}
+			}
+		}
+
+		for _, nalu := range nalus {
+			_ = nalu
+			_ = aacMuxer.WritePacket(av.Packet{
+				IsKeyFrame:      false,
+				Idx:             0,
+				CompositionTime: 0,
+				Time:            pts,
+				Duration:        0,
+				Data:            nalu,
+			})
+		}
 	}
 }
 
