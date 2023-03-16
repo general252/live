@@ -4,13 +4,19 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/aler9/gortsplib/v2"
 	"github.com/aler9/gortsplib/v2/pkg/base"
+	"github.com/aler9/gortsplib/v2/pkg/codecs/mpeg4audio"
 	"github.com/aler9/gortsplib/v2/pkg/format"
 	"github.com/aler9/gortsplib/v2/pkg/media"
+	"github.com/deepch/vdk/av"
+	"github.com/deepch/vdk/codec/aacparser"
+	"github.com/deepch/vdk/codec/h264parser"
 	"github.com/general252/live/server/server_interface"
 	"github.com/pion/rtp"
+	"github.com/pion/rtp/codecs"
 )
 
 // ffmpeg -re -i demo.flv -c:v libx264 -c:a aac -f rtsp rtsp://127.0.0.1:554/test
@@ -104,14 +110,109 @@ func (sh *serverHandler) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionClo
 
 // OnDescribe called when receiving a DESCRIBE request.
 func (sh *serverHandler) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
-	log.Printf("describe request")
+	connPath := ctx.Path
+	log.Printf("describe request %v", connPath)
 
 	sh.sessionMutex.Lock()
 	defer sh.sessionMutex.Unlock()
 
-	session, ok := sh.sessionMap[ctx.Path]
+	session, ok := sh.sessionMap[connPath]
 	if !ok {
-		log.Println("not found session ", ctx.Path)
+		// TODO:
+		if ch, ok := sh.parent.GetChannel(connPath); ok {
+			if streams, err := ch.Que.Latest().Streams(); err == nil {
+				var medias media.Medias
+				for _, stream := range streams {
+					switch stream := stream.(type) {
+					case h264parser.CodecData:
+						log.Printf("%#v", stream.Record)
+						medias = append(medias, &media.Media{
+							Type:    media.TypeVideo,
+							Control: "streamid=0",
+							Formats: []format.Format{&format.H264{
+								PayloadTyp:        96,
+								SPS:               stream.SPS(),
+								PPS:               stream.PPS(),
+								PacketizationMode: 1,
+							}},
+						})
+					case aacparser.CodecData:
+						log.Printf("%#v", stream.ConfigBytes)
+
+						f := &format.MPEG4Audio{
+							PayloadTyp: 97,
+							Config: &mpeg4audio.Config{
+								Type:         mpeg4audio.ObjectType(stream.Config.ObjectType),
+								SampleRate:   stream.SampleRate(),
+								ChannelCount: 2,
+							},
+							SizeLength:       13,
+							IndexLength:      3,
+							IndexDeltaLength: 3,
+						}
+						if stream.Type() == av.AAC {
+						}
+						if stream.ChannelLayout() == av.CH_MONO {
+							f.Config.ChannelCount = 1
+						} else if stream.ChannelLayout() == av.CH_STEREO {
+							f.Config.ChannelCount = 2
+						}
+
+						medias = append(medias, &media.Media{
+							Type:    media.TypeAudio,
+							Control: "streamid=1",
+							Formats: []format.Format{f},
+						})
+					}
+				}
+
+				stream := gortsplib.NewServerStream(medias)
+
+				go func() {
+					reader := ch.Que.Latest()
+
+					var (
+						clockRate  = float64(90000)
+						packetizer = rtp.NewPacketizer(
+							1200,
+							96,
+							222,
+							&codecs.H264Payloader{},
+							rtp.NewRandomSequencer(),
+							uint32(clockRate),
+						)
+
+						samples = uint32((time.Millisecond * 40).Seconds() * clockRate)
+					)
+
+					for {
+						pkt, err := reader.ReadPacket()
+						if err != nil {
+							break
+						}
+
+						if pkt.Idx == 0 {
+							nalus, _ := h264parser.SplitNALUs(pkt.Data)
+							for _, nalu := range nalus {
+								packets := packetizer.Packetize(nalu, samples)
+								for _, packet := range packets {
+									stream.WritePacketRTP(medias[0], packet)
+								}
+							}
+						} else if pkt.Idx == 1 {
+
+						}
+
+					}
+				}()
+
+				return &base.Response{
+					StatusCode: base.StatusOK,
+				}, stream, nil
+			}
+		}
+
+		log.Println("not found session ", connPath)
 		return &base.Response{
 			StatusCode: base.StatusNotFound,
 		}, nil, nil
