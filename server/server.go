@@ -1,10 +1,9 @@
 package server
 
 import (
-	"sync"
-
 	"github.com/deepch/vdk/av/pubsub"
 	"github.com/deepch/vdk/format"
+	"github.com/general252/live/util"
 
 	"github.com/general252/live/server/http_server"
 	"github.com/general252/live/server/rtmp_server"
@@ -28,8 +27,7 @@ type Option struct {
 type Server struct {
 	option Option
 
-	channels      map[string]*server_interface.Channel
-	channelsMutex sync.RWMutex
+	channels *util.Map[string, *server_interface.Channel]
 
 	rtmpServer *rtmp_server.RtmpServer
 	httpServer *http_server.HttpServer
@@ -42,7 +40,7 @@ func NewServer(option *Option) *Server {
 			RtmpPort: 1935,
 			HttpPort: 8080,
 		},
-		channels: map[string]*server_interface.Channel{},
+		channels: util.NewMap[string, *server_interface.Channel](),
 	}
 
 	if option != nil {
@@ -72,38 +70,26 @@ func (tis *Server) Serve() {
 }
 
 func (tis *Server) GetChannel(connPath string) (*server_interface.Channel, bool) {
-	l := tis.channelsMutex
-
-	l.RLock()
-	defer l.RUnlock()
-
-	ch, ok := tis.channels[connPath]
+	ch, ok := tis.channels.Load(connPath)
 	return ch, ok
 }
 
 func (tis *Server) CreateChannel(connPath string) (*server_interface.Channel, bool) {
-	l := tis.channelsMutex
-
-	l.RLock()
-	defer l.RUnlock()
-
-	ch, ok := tis.channels[connPath]
+	ch, ok := tis.channels.Load(connPath)
 	if ok {
 		return nil, false
 	}
 
 	ch = &server_interface.Channel{}
 	ch.Que = pubsub.NewQueue()
-	tis.channels[connPath] = ch
+	tis.channels.Store(connPath, ch)
 
 	return ch, true
 }
 
 func (tis *Server) RemoteChannel(connPath string) {
-	l := tis.channelsMutex
-
-	l.Lock()
-	defer l.Unlock()
-
-	delete(tis.channels, connPath)
+	if ch, ok := tis.channels.Load(connPath); ok {
+		_ = ch.Que.Close()
+	}
+	tis.channels.Delete(connPath)
 }
