@@ -2,6 +2,7 @@ package http_server
 
 import (
 	"fmt"
+
 	"io"
 	"log"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"github.com/deepch/vdk/av/avutil"
 	"github.com/deepch/vdk/format/flv"
 	"github.com/general252/live/server/server_interface"
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
 type HttpServer struct {
@@ -25,34 +28,87 @@ func NewHttpServer(parent server_interface.ServerInterface, port int) *HttpServe
 
 func (tis *HttpServer) Serve() error {
 	// http
-	http.HandleFunc("/", tis.handleHttpServer)
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.Default()
+	r.GET("/:ConnPath", tis.flv)
 
 	addr := fmt.Sprintf(":%v", tis.port)
 	log.Printf("http listen: %v", addr)
-
-	return http.ListenAndServe(addr, nil)
+	return r.Run(addr)
 }
 
-// handleHttpServer http-flv
-func (tis *HttpServer) handleHttpServer(w http.ResponseWriter, r *http.Request) {
-	connPath := r.URL.Path
+func (tis *HttpServer) flv(c *gin.Context) {
+	connPath := "/" + c.Param("ConnPath")
+	log.Println(connPath)
 	ch, ok := tis.parent.GetChannel(connPath)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{})
+		return
+	}
 
-	if ok {
+	var (
+		isWebsocket = false
+		ws          *websocketConnWrap
+	)
+	if len(c.Request.Header.Get("Sec-WebSocket-Key")) != 0 {
+		var upgrade = websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true
+			},
+		}
+
+		wsConn, err := upgrade.Upgrade(c.Writer, c.Request, nil)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{
+				"msg": err.Error(),
+			})
+			return
+		}
+
+		ws = &websocketConnWrap{conn: wsConn}
+		isWebsocket = true
+		defer wsConn.Close()
+	}
+
+	var (
+		w        = c.Writer
+		wFlusher = writeFlusher{
+			httpFlusher: nil,
+			Writer:      w,
+		}
+	)
+
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if isWebsocket {
+		wFlusher.Writer = ws
+	} else {
 		w.Header().Set("Content-Type", "video/x-flv")
 		w.Header().Set("Transfer-Encoding", "chunked")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.WriteHeader(200)
-		flusher := w.(http.Flusher)
-		flusher.Flush()
 
-		muxer := flv.NewMuxerWriteFlusher(writeFlusher{httpFlusher: flusher, Writer: w})
-		cursor := ch.Que.Latest()
-
-		_ = avutil.CopyFile(muxer, cursor)
-	} else {
-		http.NotFound(w, r)
+		wFlusher.httpFlusher = w.(http.Flusher)
+		wFlusher.httpFlusher.Flush()
 	}
+
+	muxer := flv.NewMuxerWriteFlusher(wFlusher)
+	cursor := ch.Que.Latest()
+
+	_ = avutil.CopyFile(muxer, cursor)
+}
+
+type websocketConnWrap struct {
+	io.Writer
+	conn *websocket.Conn
+}
+
+func (c *websocketConnWrap) Write(data []byte) (int, error) {
+	err := c.conn.WriteMessage(websocket.BinaryMessage, data)
+	if err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
 }
 
 type writeFlusher struct {
@@ -61,6 +117,8 @@ type writeFlusher struct {
 }
 
 func (c writeFlusher) Flush() error {
-	c.httpFlusher.Flush()
+	if c.httpFlusher != nil {
+		c.httpFlusher.Flush()
+	}
 	return nil
 }

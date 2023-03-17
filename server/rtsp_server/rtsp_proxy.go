@@ -122,8 +122,6 @@ func (tis *RtspSessionProxy) Init() error {
 			if err != nil {
 				log.Printf("read packet from rtmp %v", err)
 				break
-			} else {
-				log.Println("--", pkt.Time)
 			}
 
 			switch stream := streams[pkt.Idx].(type) {
