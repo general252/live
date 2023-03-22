@@ -3,12 +3,11 @@ package server
 import (
 	"github.com/deepch/vdk/av/pubsub"
 	"github.com/deepch/vdk/format"
-	"github.com/general252/live/util"
-
 	"github.com/general252/live/server/http_server"
 	"github.com/general252/live/server/rtmp_server"
 	"github.com/general252/live/server/rtsp_server"
 	"github.com/general252/live/server/server_interface"
+	"github.com/general252/live/util"
 )
 
 func init() {

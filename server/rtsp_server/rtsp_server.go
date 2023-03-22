@@ -2,6 +2,8 @@ package rtsp_server
 
 import (
 	"fmt"
+	"log"
+
 	"github.com/aler9/gortsplib/v2"
 	"github.com/aler9/gortsplib/v2/pkg/base"
 	"github.com/aler9/gortsplib/v2/pkg/format"
@@ -9,7 +11,6 @@ import (
 	"github.com/general252/live/server/server_interface"
 	"github.com/general252/live/util"
 	"github.com/pion/rtp"
-	"log"
 )
 
 // ffmpeg -re -i demo.flv -c:v libx264 -c:a aac -f rtsp rtsp://127.0.0.1:554/test

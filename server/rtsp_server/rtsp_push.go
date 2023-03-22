@@ -283,7 +283,7 @@ func (tis *RtspSessionPusher) onMPEG4Audio(m *media.Media, f format.Format, pkt 
 
 	if false {
 		if fpAAC == nil {
-			fpAAC, _ = os.Create("out.aac")
+			fpAAC, _ = os.Create("out_rtsp.aac")
 			aacMuxer = aac.NewMuxer(fpAAC)
 
 			for _, m := range tis.ctx.Medias {

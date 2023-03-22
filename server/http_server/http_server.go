@@ -2,7 +2,6 @@ package http_server
 
 import (
 	"fmt"
-
 	"io"
 	"log"
 	"net/http"
