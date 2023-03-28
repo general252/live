@@ -7,28 +7,25 @@ import (
 	"time"
 
 	"github.com/general252/live/util"
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 )
 
 type Pusher struct {
-	uid                 string
 	connPath            string
 	websocketConnection *websocket.Conn
 
-	receiver *util.Map[string, *Puller]
+	receiver *util.Map[uint64, *Puller]
 
 	peerConnection *webrtc.PeerConnection
 }
 
 func NewPusher(connPath string, conn *websocket.Conn) *Pusher {
 	return &Pusher{
-		uid:                 uuid.NewString(),
 		connPath:            connPath,
 		websocketConnection: conn,
-		receiver:            util.NewMap[string, *Puller](),
+		receiver:            util.NewMap[uint64, *Puller](),
 	}
 }
 
@@ -38,7 +35,7 @@ func (tis *Pusher) GetConnPath() string {
 
 func (tis *Pusher) Close() error {
 	var receivers []*Puller
-	tis.receiver.Range(func(key string, value *Puller) bool {
+	tis.receiver.Range(func(key uint64, value *Puller) bool {
 		receivers = append(receivers, value)
 		return true
 	})
@@ -58,12 +55,15 @@ func (tis *Pusher) Close() error {
 	return nil
 }
 
-func (tis *Pusher) OnCandidate(request *JsonProtocol) error {
+func (tis *Pusher) OnCandidate(request *JsonRequest) error {
 	return nil
 }
 
 // OnOffer 推流请求
-func (tis *Pusher) OnOffer(request *JsonProtocol, api *webrtc.API) error {
+func (tis *Pusher) OnOffer(request *JsonRequest, api *webrtc.API) error {
+	if request.Data.Offer == nil {
+		return fmt.Errorf("offer sdp is nil")
+	}
 	if tis.peerConnection != nil {
 		_ = tis.peerConnection.Close()
 		tis.peerConnection = nil
@@ -90,7 +90,7 @@ func (tis *Pusher) OnOffer(request *JsonProtocol, api *webrtc.API) error {
 	tis.peerConnection = peerConnection
 
 	// Set the remoteWebrtc SessionDescription
-	if err = peerConnection.SetRemoteDescription(request.Offer); err != nil {
+	if err = peerConnection.SetRemoteDescription(*request.Data.Offer); err != nil {
 		return err
 	}
 
@@ -125,11 +125,11 @@ func (tis *Pusher) OnOffer(request *JsonProtocol, api *webrtc.API) error {
 	// 回复
 	localSDP := peerConnection.LocalDescription()
 
-	reply := &JsonProtocol{
+	reply := &JsonResponse{
 		Method: Answer,
-		Answer: JsonAnswer{
-			Code:   0,
-			MSG:    "success",
+		Code:   0,
+		Msg:    "success",
+		Data: JsonResponsePayload{
 			Answer: localSDP,
 		},
 	}
@@ -200,27 +200,27 @@ func (tis *Pusher) initPeerConnection(peerConnection *webrtc.PeerConnection) err
 func (tis *Pusher) onTracks(peerConnection *webrtc.PeerConnection) {
 
 	var oneTrack = func(remoteTrack *webrtc.TrackRemote) {
-		rtpBuf := make([]byte, 1500)
+		buffer := make([]byte, 1500)
 		for {
-			n, _, readErr := remoteTrack.Read(rtpBuf)
-			if readErr != nil {
-				log.Println(readErr)
+			n, _, err := remoteTrack.Read(buffer)
+			if err != nil {
+				log.Println(err)
 				break
 			}
 
 			var receivers []*Puller
-			tis.receiver.Range(func(key string, value *Puller) bool {
+			tis.receiver.Range(func(key uint64, value *Puller) bool {
 				receivers = append(receivers, value)
 				return true
 			})
 
 			for _, receiver := range receivers {
-				_, _ = receiver.Write(remoteTrack, rtpBuf[:n])
+				_, _ = receiver.Write(remoteTrack, buffer[:n])
 			}
 
 			if false {
 				var packet rtp.Packet
-				if err := packet.Unmarshal(rtpBuf[:n]); err != nil {
+				if err := packet.Unmarshal(buffer[:n]); err != nil {
 					log.Println(err)
 				}
 			}
@@ -237,11 +237,11 @@ func (tis *Pusher) onTracks(peerConnection *webrtc.PeerConnection) {
 }
 
 func (tis *Pusher) AddReceiver(receiver *Puller) {
-	tis.receiver.Store(receiver.GetConnPath(), receiver)
+	tis.receiver.Store(receiver.GetID(), receiver)
 }
 
 func (tis *Pusher) DelReceiver(receiver *Puller) {
-	tis.receiver.Delete(receiver.GetConnPath())
+	tis.receiver.Delete(receiver.GetID())
 }
 
 // NewTrackerRTP 创建接收流
@@ -268,5 +268,5 @@ func (tis *Pusher) NewTrackerRTP(kinds []webrtc.RTPCodecType) ([]*webrtc.TrackLo
 		}
 	}
 
-	return rtpTrackerList, false
+	return rtpTrackerList, true
 }

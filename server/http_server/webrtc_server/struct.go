@@ -12,14 +12,23 @@ const (
 	Candidate MethodType = "candidate"
 )
 
-type JsonProtocol struct {
-	Method MethodType                `json:"method"`
-	Offer  webrtc.SessionDescription `json:"offer"` // 请求
-	Answer JsonAnswer                `json:"answer"`
+type JsonRequest struct {
+	Method MethodType         `json:"method"`
+	Data   JsonRequestPayload `json:"data"`
 }
 
-type JsonAnswer struct {
-	Code   int                        `json:"code"`             // 错误码
-	MSG    string                     `json:"msg"`              // 信息
+type JsonRequestPayload struct {
+	Offer *webrtc.SessionDescription `json:"offer"` // 请求
+	// Candidate *webrtc.ICECandidate       `json:"candidate"` // 候选数据
+}
+
+type JsonResponse struct {
+	Method MethodType          `json:"method"`
+	Code   int                 `json:"code"` // 错误码
+	Msg    string              `json:"msg"`  // 信息
+	Data   JsonResponsePayload `json:"data"`
+}
+
+type JsonResponsePayload struct {
 	Answer *webrtc.SessionDescription `json:"answer,omitempty"` // 回复
 }

@@ -3,15 +3,16 @@ package webrtc_server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"net"
+	"net/http"
+
 	"github.com/general252/live/server/server_interface"
 	"github.com/general252/live/util"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v3"
-	"log"
-	"net"
-	"net/http"
 )
 
 type WebrtcServer struct {
@@ -40,19 +41,23 @@ func (tis *WebrtcServer) OnPusher(c *gin.Context) {
 	}
 
 	// 获取参数
-	connPath := c.Param("ConnPath")
+	connPath := "/" + c.Param("ConnPath")
 	log.Println(connPath)
+	defer func() {
+		log.Printf("%v 推流请求结束", connPath)
+	}()
 
 	// 检查是否存在
 	if tis.pushers.IsExist(connPath) {
-		c.JSON(http.StatusOK, &JsonProtocol{
+		var reply = JsonResponse{
 			Method: Answer,
-			Answer: JsonAnswer{
-				Code:   1,
-				MSG:    fmt.Sprintf("have exist %v", connPath),
+			Code:   1,
+			Msg:    fmt.Sprintf("have exist %v", connPath),
+			Data: JsonResponsePayload{
 				Answer: nil,
 			},
-		})
+		}
+		c.JSON(http.StatusOK, &reply)
 		return
 	}
 
@@ -81,7 +86,7 @@ func (tis *WebrtcServer) OnPusher(c *gin.Context) {
 		}
 		log.Printf("recv: %s", message)
 
-		var request JsonProtocol
+		var request JsonRequest
 		if err = json.Unmarshal(message, &request); err != nil {
 			log.Println(err)
 			break
@@ -113,8 +118,11 @@ func (tis *WebrtcServer) OnPlayer(c *gin.Context) {
 	}
 
 	// 获取参数
-	connPath := c.Param("ConnPath")
+	connPath := "/" + c.Param("ConnPath")
 	log.Println(connPath)
+	defer func() {
+		log.Printf("%v 拉流请求结束", connPath)
+	}()
 
 	// 检查是否存在
 	objectPusher, ok := tis.pushers.Load(connPath)
@@ -125,14 +133,13 @@ func (tis *WebrtcServer) OnPlayer(c *gin.Context) {
 
 	tracks, ok := objectPusher.NewTrackerRTP([]webrtc.RTPCodecType{webrtc.RTPCodecTypeVideo, webrtc.RTPCodecTypeAudio})
 	if !ok {
-		c.JSON(http.StatusOK, &JsonProtocol{
+		var reply = JsonResponse{
 			Method: Answer,
-			Answer: JsonAnswer{
-				Code:   1,
-				MSG:    fmt.Sprintf("no found tracks"),
-				Answer: nil,
-			},
-		})
+			Code:   1,
+			Msg:    fmt.Sprintf("no found tracks"),
+			Data:   JsonResponsePayload{},
+		}
+		c.JSON(http.StatusOK, reply)
 		return
 	}
 
@@ -158,7 +165,7 @@ func (tis *WebrtcServer) OnPlayer(c *gin.Context) {
 		}
 		log.Printf("recv: %s", message)
 
-		var request JsonProtocol
+		var request JsonRequest
 		if err = json.Unmarshal(message, &request); err != nil {
 			log.Println(err)
 			break
@@ -191,20 +198,19 @@ func (tis *WebrtcServer) onProxy(c *gin.Context) {
 	}
 
 	// 获取参数
-	connPath := c.Param("ConnPath")
+	connPath := "/" + c.Param("ConnPath")
 	log.Println(connPath)
 
 	// 检查是否存在
 	sourceChannel, ok := tis.parent.GetChannel(connPath)
 	if !ok {
-		c.JSON(http.StatusOK, &JsonProtocol{
+		var reply = JsonResponse{
 			Method: Answer,
-			Answer: JsonAnswer{
-				Code:   1,
-				MSG:    fmt.Sprintf("not found %v", connPath),
-				Answer: nil,
-			},
-		})
+			Code:   1,
+			Msg:    fmt.Sprintf("not found %v", connPath),
+			Data:   JsonResponsePayload{},
+		}
+		c.JSON(http.StatusOK, reply)
 		return
 	}
 
@@ -221,16 +227,15 @@ func (tis *WebrtcServer) onProxy(c *gin.Context) {
 		_ = conn.Close()
 	}()
 
-	tracks, ok := objectProxy.NewTrackerSample([]webrtc.RTPCodecType{webrtc.RTPCodecTypeVideo, webrtc.RTPCodecTypeAudio})
+	tracks, ok := objectProxy.NewTrackerRTP([]webrtc.RTPCodecType{webrtc.RTPCodecTypeVideo, webrtc.RTPCodecTypeAudio})
 	if !ok {
-		c.JSON(http.StatusOK, &JsonProtocol{
+		var reply = JsonResponse{
 			Method: Answer,
-			Answer: JsonAnswer{
-				Code:   1,
-				MSG:    fmt.Sprintf("no found tracks"),
-				Answer: nil,
-			},
-		})
+			Code:   1,
+			Msg:    fmt.Sprintf("no found tracks"),
+			Data:   JsonResponsePayload{},
+		}
+		c.JSON(http.StatusOK, reply)
 		return
 	}
 
@@ -246,7 +251,7 @@ func (tis *WebrtcServer) onProxy(c *gin.Context) {
 		}
 		log.Printf("recv: %s", message)
 
-		var request JsonProtocol
+		var request JsonRequest
 		if err = json.Unmarshal(message, &request); err != nil {
 			log.Println(err)
 			break
@@ -255,7 +260,7 @@ func (tis *WebrtcServer) onProxy(c *gin.Context) {
 		// 收到请求
 		switch request.Method {
 		case Offer:
-			err = objectProxy.OnOfferSample(&request, tis.api, tracks)
+			err = objectProxy.OnOffer(&request, tis.api, tracks)
 		case Candidate:
 			err = objectProxy.OnCandidate(&request)
 		default:

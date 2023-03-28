@@ -31,6 +31,7 @@ func (tis *HttpServer) Serve() error {
 		webrtcServer = webrtc_server.NewWebrtcServer(tis.parent)
 	)
 
+	r.StaticFS("/home", gin.Dir("./static/ui", true))
 	r.GET("/httpflv/:ConnPath", httFlvServer.OnHttpFLV)
 	r.GET("/webrtc/pusher/:ConnPath", webrtcServer.OnPusher)
 	r.GET("/webrtc/player/:ConnPath", webrtcServer.OnPlayer)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/pion/rtp"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -12,6 +13,7 @@ import (
 )
 
 type Puller struct {
+	id                  uint64
 	connPath            string
 	websocketConnection *websocket.Conn
 
@@ -20,11 +22,19 @@ type Puller struct {
 	tracks []*webrtc.TrackLocalStaticRTP
 }
 
+var pullerId uint64 = 0
+
 func NewPuller(connPath string, conn *websocket.Conn) *Puller {
+	id := atomic.AddUint64(&pullerId, 1)
 	return &Puller{
+		id:                  id,
 		connPath:            connPath,
 		websocketConnection: conn,
 	}
+}
+
+func (tis *Puller) GetID() uint64 {
+	return tis.id
 }
 
 func (tis *Puller) GetConnPath() string {
@@ -32,7 +42,10 @@ func (tis *Puller) GetConnPath() string {
 }
 
 // OnOffer 拉流请求
-func (tis *Puller) OnOffer(request *JsonProtocol, api *webrtc.API, tracks []*webrtc.TrackLocalStaticRTP) error {
+func (tis *Puller) OnOffer(request *JsonRequest, api *webrtc.API, tracks []*webrtc.TrackLocalStaticRTP) error {
+	if request.Data.Offer == nil {
+		return fmt.Errorf("offer sdp is nil")
+	}
 	if tis.peerConnection != nil {
 		_ = tis.peerConnection.Close()
 		tis.peerConnection = nil
@@ -63,7 +76,7 @@ func (tis *Puller) OnOffer(request *JsonProtocol, api *webrtc.API, tracks []*web
 	}
 
 	// Set the remoteWebrtc SessionDescription
-	if err = peerConnection.SetRemoteDescription(request.Offer); err != nil {
+	if err = peerConnection.SetRemoteDescription(*request.Data.Offer); err != nil {
 		return err
 	}
 
@@ -88,14 +101,16 @@ func (tis *Puller) OnOffer(request *JsonProtocol, api *webrtc.API, tracks []*web
 
 	tis.tracks = tracks
 
-	err = wsConnection.WriteJSON(&JsonProtocol{
+	var reply = &JsonResponse{
 		Method: Answer,
-		Answer: JsonAnswer{
-			Code:   0,
-			MSG:    "success",
+		Code:   0,
+		Msg:    "success",
+		Data: JsonResponsePayload{
 			Answer: peerConnection.LocalDescription(),
 		},
-	})
+	}
+
+	err = wsConnection.WriteJSON(reply)
 	if err != nil {
 		return err
 	}
@@ -149,7 +164,7 @@ func (tis *Puller) initPeerConnection(peerConnection *webrtc.PeerConnection) err
 	return nil
 }
 
-func (tis *Puller) OnCandidate(request *JsonProtocol) error {
+func (tis *Puller) OnCandidate(request *JsonRequest) error {
 	return nil
 }
 

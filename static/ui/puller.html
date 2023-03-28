@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>pull</title>
+</head>
+<body>
+
+name: <input type="text" id="streamName" value="one"> <br/>
+
+<button onclick="pullStream()">PULL</button>
+<br/>
+
+<div id="remoteVideos"></div>
+
+<div id="logs"></div>
+<br/>
+
+
+</body>
+</html>
+
+
+<script>
+    let pc = new RTCPeerConnection()
+
+    function log(msg) {
+        document.getElementById('logs').innerHTML += msg + '<br>'
+        console.log(msg)
+    }
+
+    pc.oniceconnectionstatechange = function () {
+        log("iceConnectionState: " + pc.iceConnectionState)
+    }
+
+    pc.onicecandidate = function (event) {
+        if (event.candidate != null) {
+            log("candidate: " + JSON.stringify(event.candidate))
+        }
+    }
+
+    pc.ontrack = function (event) {
+        let el = document.createElement(event.track.kind)
+        el.srcObject = event.streams[0]
+        el.autoplay = true
+        el.controls = false
+        el.width = 640
+        el.height = 480
+
+        document.getElementById('remoteVideos').appendChild(el)
+    }
+    
+    function pullStream() {
+        let protocol = "ws://"
+        if (window.location.protocol === "https:") {
+            protocol = "wss://"
+        }
+        let streamName = document.getElementById("streamName").value;
+        let wsURL = protocol + window.location.hostname + ":" + window.location.port + "/webrtc/player/" + streamName;
+
+        console.log(wsURL)
+
+        let ws = new WebSocket(wsURL)
+        ws.onopen = (e) => {
+            console.log(e)
+
+            pc.createOffer({
+                offerToReceiveVideo: true,
+                iceRestart: true,
+            }).then(offer => {
+                pc.setLocalDescription(offer)
+
+                ws.send(JSON.stringify({
+                    method: "offer",
+                    data: {
+                        offer: offer
+                    },
+                }))
+            }).catch(function (e) {
+                log(e)
+            })
+        }
+        ws.onclose = (e) => {
+            console.log(e)
+        }
+        ws.onerror = (e) => {
+            console.log(e)
+        }
+        ws.onmessage = (e) => {
+            log(JSON.stringify(e.data))
+
+            let object = JSON.parse(e.data)
+            if (object.code === 0) {
+                pc.setRemoteDescription(object.data.answer)
+            }
+        }
+    }
+
+</script>
+
